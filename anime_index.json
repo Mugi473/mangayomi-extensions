@@ -12,7 +12,7 @@
     "hasCloudflare": true,
     "sourceCodeUrl": "https://raw.githubusercontent.com/Mugi473/mangayomi-extensions/main/src/fr/animesama.js",
     "apiUrl": "",
-    "version": "1.0.0",
+    "version": "1.0.2",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
