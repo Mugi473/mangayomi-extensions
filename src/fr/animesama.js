@@ -6,7 +6,7 @@ const mangayomiSources = [{
     "iconUrl": "https://raw.githubusercontent.com/Mugi473/mangayomi-extensions/main/icons/animesama.png",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.0.2",
+    "version": "1.0.3",
     "pkgPath": "src/fr/animesama.js"
 }];
 
@@ -28,33 +28,56 @@ class DefaultExtension extends MProvider {
         const list = [];
         const seen = new Set();
 
-        const pageTitle = doc.selectFirst("title")?.text.trim() || "Sans titre";
-        list.push({
-            name: `[VOIR CODE SOURCE] HTTP ${res.statusCode} - ${pageTitle}`,
-            link: "diagnostic://catalogue",
-            imageUrl: "https://anime-sama.to/template-oeuvre/img/logo.png"
-        });
+        // Sélection directe basée sur la structure exacte visible sur ta capture d'écran
+        const cards = doc.select("a.as-carte-lien");
 
-        const regex = /href=["']((?:https?:\/\/[^"']+)?\/catalogue\/([^"'\/?#]+))\/?["']/gi;
-        let match;
-        while ((match = regex.exec(html)) !== null) {
-            let href = match[1];
-            const slug = match[2];
-            if (!slug || slug === "index.php") continue;
+        for (const a of cards) {
+            let href = a.attr("href") || "";
+            if (!href.includes("/catalogue/")) continue;
+
             if (href.startsWith("/")) href = this.source.baseUrl + href;
+            href = href.split("?")[0].replace(/\/$/, "");
             if (seen.has(href)) continue;
+
+            const titleEl = a.selectFirst("h3.as-carte-titre");
+            const name = titleEl ? titleEl.text.trim() : "";
+            if (!name) continue;
+
+            const imgEl = a.selectFirst("img");
+            let imageUrl = imgEl ? (imgEl.attr("src") || imgEl.attr("data-src") || "") : "";
+            if (imageUrl.startsWith("/")) imageUrl = this.source.baseUrl + imageUrl;
 
             seen.add(href);
             list.push({
-                name: slug.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase()),
+                name: name,
                 link: href,
-                imageUrl: `https://cdn.statically.io/gh/Anime-Sama/IMG/img/contenu/${slug}.jpg`
+                imageUrl: imageUrl
             });
+        }
+
+        // Sécurité de secours si le parseur DOM ne trouve pas les cartes
+        if (list.length === 0) {
+            const regex = /href=["']((?:https?:\/\/[^"']+)?\/catalogue\/([^"'\/?#]+))\/?["']/gi;
+            let match;
+            while ((match = regex.exec(html)) !== null) {
+                let href = match[1];
+                const slug = match[2];
+                if (!slug || slug === "index.php" || slug === "catalogue") continue;
+                if (href.startsWith("/")) href = this.source.baseUrl + href;
+                if (seen.has(href)) continue;
+
+                seen.add(href);
+                list.push({
+                    name: slug.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase()),
+                    link: href,
+                    imageUrl: `https://cdn.statically.io/gh/Anime-Sama/IMG/img/contenu/${slug}.jpg`
+                });
+            }
         }
 
         return {
             list: list,
-            hasNextPage: list.length > 5
+            hasNextPage: list.length >= 10
         };
     }
 
@@ -77,22 +100,6 @@ class DefaultExtension extends MProvider {
     }
 
     async getDetail(url) {
-        if (url.startsWith("diagnostic://")) {
-            const res = await this.requestRes(`${this.source.baseUrl}/catalogue/?type%5B%5D=Anime&page=1`);
-            const html = res.body || "Corps HTML vide";
-            const idx = html.indexOf("/catalogue/");
-            const extrait = idx !== -1 
-                ? html.substring(Math.max(0, idx - 300), Math.min(html.length, idx + 1200))
-                : html.substring(0, 1500);
-
-            return {
-                name: `Code HTTP : ${res.statusCode}`,
-                imageUrl: "",
-                description: `=== EXTRAIT DU CODE HTML REÇU ===\n\n${extrait}`,
-                episodes: [{ name: "Épisode Test", url: "test" }]
-            };
-        }
-
         const baseUrl = url.startsWith("http") ? url : this.source.baseUrl + url;
         const res = await this.requestRes(baseUrl);
         const html = res.body || "";
@@ -196,7 +203,7 @@ class DefaultExtension extends MProvider {
                 } else if (link.includes("sendvid.com")) {
                     const res = await this.requestRes(link);
                     const html = res.body || "";
-                    const m = html.match(/var\s+video_source\s*=\s*["']([^"']+)["']/) || html.match(/<source\s+src=["']([^"']+)["']/);
+                    const m = html.match(/var\s+video_source\s* = \s*["']([^"']+)["']/) || html.match(/<source\s+src=["']([^"']+)["']/);
                     if (m) {
                         videos.push({
                             url: m[1],
