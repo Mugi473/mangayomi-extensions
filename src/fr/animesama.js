@@ -6,7 +6,7 @@ const mangayomiSources = [{
     "iconUrl": "https://raw.githubusercontent.com/Mugi473/mangayomi-extensions/main/icons/animesama.png",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.0.0",
+    "version": "1.0.2",
     "pkgPath": "src/fr/animesama.js"
 }];
 
@@ -18,79 +18,94 @@ class DefaultExtension extends MProvider {
         };
     }
 
-    async request(url) {
-        const res = await new Client().get(url, this.getHeaders(url));
-        return res.body;
+    async requestRes(url) {
+        return await new Client().get(url, this.getHeaders(url));
     }
 
-    parseCatalog(html) {
+    parseCatalog(res) {
+        const html = res.body || "";
         const doc = new Document(html);
         const list = [];
-        const cards = doc.select("div.shrink-0, div.catalogue-card, a[href*='/catalogue/']");
         const seen = new Set();
 
-        for (const card of cards) {
-            let linkEl = card.selectFirst("a[href*='/catalogue/']");
-            let href = linkEl ? linkEl.attr("href") : card.attr("href");
-            if (!href || !href.includes("/catalogue/")) continue;
+        const pageTitle = doc.selectFirst("title")?.text.trim() || "Sans titre";
+        list.push({
+            name: `[VOIR CODE SOURCE] HTTP ${res.statusCode} - ${pageTitle}`,
+            link: "diagnostic://catalogue",
+            imageUrl: "https://anime-sama.to/template-oeuvre/img/logo.png"
+        });
 
-            // Nettoyage de l'URL de base de l'oeuvre
-            href = href.replace(/\/$/, "");
+        const regex = /href=["']((?:https?:\/\/[^"']+)?\/catalogue\/([^"'\/?#]+))\/?["']/gi;
+        let match;
+        while ((match = regex.exec(html)) !== null) {
+            let href = match[1];
+            const slug = match[2];
+            if (!slug || slug === "index.php") continue;
             if (href.startsWith("/")) href = this.source.baseUrl + href;
             if (seen.has(href)) continue;
 
-            const imgEl = card.selectFirst("img");
-            const titleEl = card.selectFirst("h1, h2, h3, p.font-semibold, .card-title");
-            const name = titleEl ? titleEl.text.trim() : (imgEl ? imgEl.attr("alt").trim() : "");
-            if (!name) continue;
-
-            const imageUrl = imgEl ? imgEl.attr("src") : "";
             seen.add(href);
             list.push({
-                name: name,
+                name: slug.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase()),
                 link: href,
-                imageUrl: imageUrl
+                imageUrl: `https://cdn.statically.io/gh/Anime-Sama/IMG/img/contenu/${slug}.jpg`
             });
         }
+
         return {
             list: list,
-            hasNextPage: list.length >= 20
+            hasNextPage: list.length > 5
         };
     }
 
     async getPopular(page) {
         const url = `${this.source.baseUrl}/catalogue/?type%5B%5D=Anime&page=${page}`;
-        const html = await this.request(url);
-        return this.parseCatalog(html);
+        const res = await this.requestRes(url);
+        return this.parseCatalog(res);
     }
 
     async getLatestUpdates(page) {
-        const url = `${this.source.baseUrl}/catalogue/?type%5B%5D=Anime&page=${page}`;
-        const html = await this.request(url);
-        return this.parseCatalog(html);
+        const url = `${this.source.baseUrl}/catalogue/?page=${page}`;
+        const res = await this.requestRes(url);
+        return this.parseCatalog(res);
     }
 
     async search(query, page, filters) {
-        const url = `${this.source.baseUrl}/catalogue/?type%5B%5D=Anime&search=${encodeURIComponent(query)}&page=${page}`;
-        const html = await this.request(url);
-        return this.parseCatalog(html);
+        const url = `${this.source.baseUrl}/catalogue/?search=${encodeURIComponent(query)}&page=${page}`;
+        const res = await this.requestRes(url);
+        return this.parseCatalog(res);
     }
 
     async getDetail(url) {
+        if (url.startsWith("diagnostic://")) {
+            const res = await this.requestRes(`${this.source.baseUrl}/catalogue/?type%5B%5D=Anime&page=1`);
+            const html = res.body || "Corps HTML vide";
+            const idx = html.indexOf("/catalogue/");
+            const extrait = idx !== -1 
+                ? html.substring(Math.max(0, idx - 300), Math.min(html.length, idx + 1200))
+                : html.substring(0, 1500);
+
+            return {
+                name: `Code HTTP : ${res.statusCode}`,
+                imageUrl: "",
+                description: `=== EXTRAIT DU CODE HTML REÇU ===\n\n${extrait}`,
+                episodes: [{ name: "Épisode Test", url: "test" }]
+            };
+        }
+
         const baseUrl = url.startsWith("http") ? url : this.source.baseUrl + url;
-        const html = await this.request(baseUrl);
+        const res = await this.requestRes(baseUrl);
+        const html = res.body || "";
         const doc = new Document(html);
 
-        const name = doc.selectFirst("#titreOeuvre")?.text.trim() || "Anime";
-        const imageUrl = doc.selectFirst("#coverOeuvre")?.attr("src") || "";
-        const description = doc.selectFirst("p.text-sm.text-gray-300, p.text-gray-400")?.text.trim() || "";
+        const name = doc.selectFirst("#titreOeuvre, h1, h2")?.text.trim() || "Anime";
+        const imageUrl = doc.selectFirst("#coverOeuvre, img")?.attr("src") || "";
+        const description = doc.selectFirst("p.text-sm, p.text-gray-300, p.text-gray-400")?.text.trim() || "";
 
-        // Extraction des appels panneauAnime("Nom Saison", "dossier/langue")
         const panneauRegex = /panneauAnime\(\s*["']([^"']+)["']\s*,\s*["']([^"']+)["']\s*\)/g;
         const seasons = [];
         let match;
 
-        // On ignore la section commentée dans le code source d'Anime-Sama
         const cleanHtml = html.replace(/\/\*[\s\S]*?\*\//g, "");
         while ((match = panneauRegex.exec(cleanHtml)) !== null) {
             const seasonName = match[1];
@@ -103,47 +118,44 @@ class DefaultExtension extends MProvider {
         const chapters = [];
 
         for (const season of seasons) {
-            // On tente VOSTFR et VF pour chaque saison trouvée
-            const basePath = season.path.replace(/\/(vostfr|vf).*$/i, "");
-            const langs = ["vostfr", "vf"];
+            const cleanPath = season.path.replace(/^\/+|\/+$/g, "");
+            const epJsUrl = `${baseUrl}/${cleanPath}/episodes.js`;
+            const epRes = await this.requestRes(epJsUrl);
+            const epJs = epRes.body || "";
+            if (!epJs || !epJs.includes("var eps")) continue;
 
-            for (const lang of langs) {
-                const epJsUrl = `${baseUrl}/${basePath}/${lang}/episodes.js`;
-                const epJs = await this.request(epJsUrl);
-                if (!epJs || !epJs.includes("var eps")) continue;
+            const arrays = {};
+            const epsRegex = /var\s+(eps\d+)\s*=\s*\[([\s\S]*?)\];/g;
+            let epsMatch;
 
-                // Découpage par tableau eps1, eps2, eps3...
-                const arrays = {};
-                const epsRegex = /var\s+(eps\d+)\s*=\s*\[([\s\S]*?)\];/g;
-                let epsMatch;
-
-                while ((epsMatch = epsRegex.exec(epJs)) !== null) {
-                    const key = epsMatch[1];
-                    const content = epsMatch[2];
-                    const urls = [];
-                    const urlRegex = /["'](https?:\/\/[^"']+)["']/g;
-                    let uMatch;
-                    while ((uMatch = urlRegex.exec(content)) !== null) {
-                        urls.push(uMatch[1]);
-                    }
-                    arrays[key] = urls;
+            while ((epsMatch = epsRegex.exec(epJs)) !== null) {
+                const key = epsMatch[1];
+                const content = epsMatch[2];
+                const urls = [];
+                const urlRegex = /["'](https?:\/\/[^"']+)["']/g;
+                let uMatch;
+                while ((uMatch = urlRegex.exec(content)) !== null) {
+                    urls.push(uMatch[1]);
                 }
+                arrays[key] = urls;
+            }
 
-                const keys = Object.keys(arrays);
-                if (keys.length === 0) continue;
+            const keys = Object.keys(arrays);
+            if (keys.length === 0) continue;
 
-                const maxLen = Math.max(...keys.map(k => arrays[k].length));
-                for (let i = 0; i < maxLen; i++) {
-                    const epLinks = [];
-                    for (const k of keys) {
-                        if (arrays[k][i]) epLinks.push(arrays[k][i]);
-                    }
-                    if (epLinks.length > 0) {
-                        chapters.push({
-                            name: `${season.name} (${lang.toUpperCase()}) - Épisode ${i + 1}`,
-                            url: JSON.stringify(epLinks)
-                        });
-                    }
+            const maxLen = Math.max(...keys.map(k => arrays[k].length));
+            const langLabel = cleanPath.toUpperCase().includes("VF") ? "VF" : "VOSTFR";
+
+            for (let i = 0; i < maxLen; i++) {
+                const epLinks = [];
+                for (const k of keys) {
+                    if (arrays[k][i]) epLinks.push(arrays[k][i]);
+                }
+                if (epLinks.length > 0) {
+                    chapters.push({
+                        name: `${season.name} (${langLabel}) - Épisode ${i + 1}`,
+                        url: JSON.stringify(epLinks)
+                    });
                 }
             }
         }
@@ -169,7 +181,8 @@ class DefaultExtension extends MProvider {
         for (const link of links) {
             try {
                 if (link.includes("sibnet.ru")) {
-                    const html = await this.request(link);
+                    const res = await this.requestRes(link);
+                    const html = res.body || "";
                     const m = html.match(/player\.src\(\[\{src:\s*["']([^"']+)["']/);
                     if (m) {
                         const vUrl = m[1].startsWith("http") ? m[1] : "https://video.sibnet.ru" + m[1];
@@ -181,7 +194,8 @@ class DefaultExtension extends MProvider {
                         });
                     }
                 } else if (link.includes("sendvid.com")) {
-                    const html = await this.request(link);
+                    const res = await this.requestRes(link);
+                    const html = res.body || "";
                     const m = html.match(/var\s+video_source\s*=\s*["']([^"']+)["']/) || html.match(/<source\s+src=["']([^"']+)["']/);
                     if (m) {
                         videos.push({
@@ -193,7 +207,8 @@ class DefaultExtension extends MProvider {
                     }
                 } else if (link.includes("vidmoly")) {
                     const cleanLink = link.replace("vidmoly.to", "vidmoly.net");
-                    const html = await this.request(cleanLink);
+                    const res = await this.requestRes(cleanLink);
+                    const html = res.body || "";
                     const m = html.match(/file:\s*["'](https?:\/\/[^"']+\.m3u8[^"']*)["']/);
                     if (m) {
                         videos.push({
@@ -204,9 +219,7 @@ class DefaultExtension extends MProvider {
                         });
                     }
                 }
-            } catch (err) {
-                // Ignore un lecteur mort et passe au suivant
-            }
+            } catch (err) {}
         }
 
         return videos;
