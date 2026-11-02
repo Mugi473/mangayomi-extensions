@@ -1,0 +1,24 @@
+[
+  {
+    "name": "Anime-Sama",
+    "id": 473001,
+    "baseUrl": "https://anime-sama.to",
+    "lang": "fr",
+    "typeSource": "single",
+    "iconUrl": "https://raw.githubusercontent.com/Mugi473/mangayomi-extensions/main/icons/animesama.png",
+    "dateFormat": "",
+    "dateFormatLocale": "",
+    "isNsfw": false,
+    "hasCloudflare": true,
+    "sourceCodeUrl": "https://raw.githubusercontent.com/Mugi473/mangayomi-extensions/main/src/fr/animesama.js",
+    "apiUrl": "",
+    "version": "1.0.0",
+    "isManga": false,
+    "itemType": 1,
+    "isFullData": false,
+    "appMinVerReq": "0.5.0",
+    "additionalParams": "",
+    "sourceCodeLanguage": 1,
+    "notes": "Anime-Sama VF & VOSTFR"
+  }
+]
